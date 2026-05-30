@@ -2,8 +2,7 @@
 extends Node
 class_name ScriptTools
 ## Script and file management tools for MCP.
-## Handles: edit_script, validate_script, list_scripts,
-##          create_folder, delete_file, rename_file
+## Handles: edit_script, list_scripts, create_folder, delete_file, rename_file
 
 var _editor_plugin: EditorPlugin = null
 
@@ -112,108 +111,6 @@ func edit_script(args: Dictionary) -> Dictionary:
 		&"message": "Applied edit to %s (+%d -%d lines)" % [path, added, removed]
 	}
 
-# =============================================================================
-# validate_script
-# =============================================================================
-func validate_script(args: Dictionary) -> Dictionary:
-	var path: String = str(args.get(&"path", ""))
-	if path.strip_edges().is_empty():
-		return {&"ok": false, &"error": "Missing 'path'"}
-
-	path = _ensure_res_path(path)
-
-	if not FileAccess.file_exists(path):
-		return {&"ok": false, &"error": "File not found: " + path}
-
-	# Read the source text directly from disk so we validate the *current*
-	# file contents, not a stale resource-cache entry.
-	var file := FileAccess.open(path, FileAccess.READ)
-	if not file:
-		return {&"ok": false, &"error": "Cannot read file: " + path}
-	var source_code := file.get_as_text()
-	file.close()
-
-	# Create a fresh GDScript instance and assign the source for parsing.
-	var script := GDScript.new()
-	script.source_code = source_code
-
-	# reload() triggers the parser/compiler and returns OK or an error code.
-	var err := script.reload()
-
-	if err != OK:
-		# Try to extract useful details from the Godot output log.
-		var errors := _collect_recent_script_errors(path)
-		var message: String = "Script has errors."
-		var hint: String = ""
-		if errors.size() > 0:
-			message += " Details: " + "; ".join(errors)
-		else:
-			message += " Godot returned error_code %d but did not expose parse line details through this validation path." % err
-			hint = "For editor-plugin/addon scripts, validate_script can fail without diagnostics because dependencies and @tool context are not fully loaded in this isolated parser path. Check get_errors/get_console_log after enabling or reloading the addon for actionable line details."
-		var out: Dictionary = {
-			&"ok": true,
-			&"valid": false,
-			&"path": path,
-			&"error_code": err,
-			&"errors": errors,
-			&"diagnostics_available": errors.size() > 0,
-			&"message": message,
-		}
-		if not hint.is_empty():
-			out[&"hint"] = hint
-		return out
-
-	# Parsing succeeded. The script is syntactically valid GDScript. We used
-	# to *also* check `script.can_instantiate()` and report `valid: false`
-	# when it returned false — but that flagged perfectly normal scripts
-	# (e.g. `extends Node2D` + `@export var foo: int = 0`) because a
-	# free-floating GDScript instance with no resource_path can\'t always
-	# satisfy `can_instantiate()` even though `node.set_script(...)` works
-	# fine. Treat parse success as the primary signal; surface a
-	# `can_instantiate` flag for callers that genuinely care about
-	# free-instance creation (autoloads, dynamic class loading).
-	return {
-		&"ok": true,
-		&"valid": true,
-		&"path": path,
-		&"can_instantiate": script.can_instantiate(),
-		&"message": "No syntax errors found"
-	}
-
-func _collect_recent_script_errors(script_path: String) -> Array:
-	"""Grab recent SCRIPT ERROR / Parse Error lines from the editor Output panel
-	that mention the given script path.  Best-effort — returns [] if the panel
-	cannot be accessed."""
-	var errors: Array = []
-	if not _editor_plugin:
-		return errors
-
-	# Find the editor's Output panel RichTextLabel
-	var base := _editor_plugin.get_editor_interface().get_base_control()
-	var editor_log := _find_node_by_class(base, "EditorLog")
-	if not editor_log:
-		return errors
-	var rtl := _find_child_rtl(editor_log)
-	if not rtl:
-		return errors
-
-	var text: String = rtl.get_parsed_text()
-	var short_path := script_path.get_file()  # e.g. "player.gd"
-
-	for line: String in text.split("\n"):
-		line = line.strip_edges()
-		if line.is_empty():
-			continue
-		if short_path in line or script_path in line:
-			if line.begins_with("SCRIPT ERROR:") or line.begins_with("Parse Error:") \
-				or line.begins_with("ERROR:") or line.begins_with("at:"):
-				errors.append(line)
-
-	# Keep only the last 10 relevant lines
-	if errors.size() > 10:
-		errors = errors.slice(errors.size() - 10)
-	return errors
-
 func _find_node_by_class(root: Node, cls_name: String) -> Node:
 	if root.get_class() == cls_name:
 		return root
@@ -233,6 +130,7 @@ func _find_child_rtl(node: Node) -> RichTextLabel:
 	return null
 
 # =============================================================================
+=======
 # list_scripts
 # =============================================================================
 func list_scripts(args: Dictionary) -> Dictionary:

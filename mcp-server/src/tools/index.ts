@@ -10,6 +10,7 @@ import { assetTools } from './asset-tools.js';
 import { visualizerTools } from './visualizer-tools.js';
 import { undoTools } from './undo-tools.js';
 import { batchTools } from './batch-tools.js';
+import { lspTools } from './lsp-tools.js';
 import type { ToolDefinition } from '../types.js';
 
 export const allTools: ToolDefinition[] = [
@@ -21,6 +22,7 @@ export const allTools: ToolDefinition[] = [
   ...visualizerTools,
   ...undoTools,
   ...batchTools,
+  ...lspTools,
 ];
 
 export function toolExists(toolName: string): boolean {

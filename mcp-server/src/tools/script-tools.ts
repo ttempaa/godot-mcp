@@ -21,20 +21,6 @@ export const scriptTools: ToolDefinition[] = [
     }
   },
   {
-    name: 'validate_script',
-    description: 'Validate a GDScript file for syntax errors using Godot\'s built-in parser. Good for ordinary project scripts after editing. For @tool/editor-plugin addon scripts this isolated parser path may return valid:false with diagnostics_available:false because dependencies and editor context are not fully loaded; in that case, use get_errors/get_console_log after enabling or reloading the addon for actionable details.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path to the GDScript file to validate (e.g., res://scripts/player.gd)'
-        }
-      },
-      required: ['path']
-    }
-  },
-  {
     name: 'create_folder',
     description: 'Create a directory (with parent directories if needed).',
     inputSchema: {

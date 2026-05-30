@@ -163,7 +163,6 @@ func _init_tools() -> void:
 		&"call_method": [_scene_tools, &"call_method"],
 
 		&"edit_script": [_script_tools, &"edit_script"],
-		&"validate_script": [_script_tools, &"validate_script"],
 		&"list_scripts": [_script_tools, &"list_scripts"],
 		&"create_folder": [_script_tools, &"create_folder"],
 		&"delete_file": [_script_tools, &"delete_file"],
