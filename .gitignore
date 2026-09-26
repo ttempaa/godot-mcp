@@ -33,3 +33,4 @@ undo-system-explainer.html
 
 # Plugin scratch space (undo snapshots, screenshots)
 addons/godot_mcp/cache/
+.tmp/
