@@ -534,13 +534,15 @@ func _call_method(args: Dictionary) -> Dictionary:
 
 	var parsed_args: Array = []
 	var sig_info: Dictionary = _find_method_info_runtime(node, method)
-	var declared_args: Array = sig_info.get("args", []) if not sig_info.is_empty() else []
+	var declared_arg_types: Array = []
+	for a: Dictionary in (sig_info.get("args", []) as Array):
+		declared_arg_types.append(int(a.get("type", TYPE_NIL)))
 	# Parse with declared arg types: plain dicts stay dicts ({x,y} would
 	# otherwise be inferred as Vector2), Resource discriminators get loaded.
 	for i in range((raw_args as Array).size()):
 		var v: Variant = (raw_args as Array)[i]
-		if i < declared_args.size():
-			parsed_args.append(VariantCodec.parse_typed_value(v, int(declared_args[i].get("type", TYPE_NIL))))
+		if i < declared_arg_types.size():
+			parsed_args.append(VariantCodec.parse_typed_value(v, declared_arg_types[i]))
 		else:
 			parsed_args.append(VariantCodec.parse_value(v))
 
