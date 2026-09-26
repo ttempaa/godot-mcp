@@ -275,7 +275,7 @@ func get_file_outline(args: Dictionary) -> Dictionary:
 
 	var entries: Array = []
 	var re := RegEx.new()
-	re.compile("^(\s*)(class_name|extends|class|func|signal|const|var|@export|enum)\b")
+	re.compile("^(\\s*)(class_name|extends|class|func|signal|const|var|@export|enum)\\b")
 	for i in range(lines.size()):
 		var line: String = lines[i]
 		var stripped := line.strip_edges(true, false)
@@ -343,10 +343,10 @@ func _compute_outline_spans(entries: Array, lines: PackedStringArray) -> void:
 func _redact_sensitive_content(content: String) -> String:
 	var out := content
 	var rules := [
-		{"pattern": "(?im)^(\s*(?:provider/)?api_key\s*=\s*).*$", "replacement": "$1" + REDACTED_TEXT},
-		{"pattern": "(?im)^(\s*(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*).*$", "replacement": "$1" + REDACTED_TEXT},
-		{"pattern": "(?im)^(\s*authorization\s*[:=]\s*bearer\s+).*$", "replacement": "$1" + REDACTED_TEXT},
-		{"pattern": "(?im)^(\s*x-api-key\s*[:=]\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\\s*(?:provider/)?api_key\\s*=\\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\\s*(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token|password|secret)\\s*[:=]\\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\\s*authorization\\s*[:=]\\s*bearer\\s+).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\\s*x-api-key\\s*[:=]\\s*).*$", "replacement": "$1" + REDACTED_TEXT},
 	]
 	for rule in rules:
 		var regex := RegEx.new()

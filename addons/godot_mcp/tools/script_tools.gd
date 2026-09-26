@@ -130,7 +130,6 @@ func _find_child_rtl(node: Node) -> RichTextLabel:
 	return null
 
 # =============================================================================
-=======
 # list_scripts
 # =============================================================================
 func list_scripts(args: Dictionary) -> Dictionary:
