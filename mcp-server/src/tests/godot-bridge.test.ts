@@ -162,7 +162,7 @@ describe('GodotBridge — connections', () => {
     expect(events).toEqual([]);
   });
 
-  it('rejects a second editor connection', async () => {
+  it('replaces a stale editor connection on hello', async () => {
     bridge = createBridge(TEST_PORT, SHORT_TIMEOUT);
     await bridge.start();
 
@@ -170,14 +170,19 @@ describe('GodotBridge — connections', () => {
     client.send(JSON.stringify({ type: 'godot_ready', role: 'editor', project_path: '/p1' }));
     await new Promise((r) => setTimeout(r, 50));
 
-    const second = await connectClient(TEST_PORT);
-    const closePromise = new Promise<number>((resolve) => {
-      second.on('close', (code) => resolve(code));
+    // Replace-on-hello: a fresh editor hello wins the slot; the stale
+    // socket is closed with 4003 instead of rejecting the newcomer (a
+    // half-open socket from a killed editor would otherwise block the
+    // slot until TCP timeout).
+    const firstClose = new Promise<number>((resolve) => {
+      client.on('close', (code) => resolve(code));
     });
-    // Second connection claims editor — should be rejected with 4000.
+    const second = await connectClient(TEST_PORT);
     second.send(JSON.stringify({ type: 'godot_ready', role: 'editor', project_path: '/p2' }));
-    const code = await closePromise;
-    expect(code).toBe(4000);
+    const code = await firstClose;
+    expect(code).toBe(4003);
+    expect(bridge.getStatus().projectPath).toBe('/p2');
+    second.close();
   });
 
   it('accepts a runtime connection alongside an editor connection', async () => {
