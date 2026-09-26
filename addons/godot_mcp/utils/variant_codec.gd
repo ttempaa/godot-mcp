@@ -20,13 +20,16 @@ static func parse_value(value: Variant) -> Variant:
 	return value
 
 static func parse_typed_value(value: Variant, type_hint: int) -> Variant:
-	if type_hint == -1:
+	if type_hint == -1 or type_hint == TYPE_NIL:
 		return parse_value(value)
 
 	if value is Dictionary:
 		var dict: Dictionary = value
 		if not str(dict.get(&"type", "")).is_empty():
 			return parse_value(dict)
+		# A declared Dictionary bypasses inference ({x,y} would become Vector2).
+		if type_hint == TYPE_DICTIONARY:
+			return dict
 
 		match type_hint:
 			TYPE_VECTOR2:
@@ -142,6 +145,14 @@ static func _parse_explicit_dictionary(type_name: String, dict: Dictionary) -> V
 			return _parse_transform3d_dictionary(dict)
 		"AABB":
 			return _parse_aabb_dictionary(dict)
+		"Resource":
+			# Round-trip counterpart of serialize_value's Resource form.
+			var res_path: String = str(dict.get(&"path", ""))
+			if res_path.begins_with("res://") or res_path.begins_with("user://"):
+				var loaded: Resource = load(res_path)
+				if loaded != null:
+					return loaded
+			return dict
 		_:
 			return dict
 
