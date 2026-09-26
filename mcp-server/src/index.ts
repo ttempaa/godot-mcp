@@ -367,6 +367,28 @@ async function executeToolCall(
     return executeLspToolCall(name, toolArgs);
   }
 
+  // batch_execute runs its sub-commands inside the Godot editor (GD-side
+  // executor + undo snapshots), which cannot reach server-side-only tools.
+  // Fail fast instead of letting the sub-command silently fall through to a
+  // stale bridge handler.
+  if (name === 'batch_execute') {
+    const commands = Array.isArray((toolArgs as Record<string, unknown>).commands)
+      ? ((toolArgs as Record<string, unknown>).commands as Array<Record<string, unknown>>)
+      : [];
+    const lspInside = commands
+      .map((c) => String(c?.name ?? ''))
+      .filter((n) => LSP_TOOLS.has(n));
+    if (lspInside.length > 0) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          ok: false,
+          error: `batch_execute cannot run server-side tools: ${lspInside.join(', ')}. Call them directly instead.`,
+        }, null, 2) }],
+        isError: true,
+      };
+    }
+  }
+
   if (!toolExists(name)) {
     throw new McpError(
       ErrorCode.MethodNotFound,
