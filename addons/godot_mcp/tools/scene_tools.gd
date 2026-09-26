@@ -934,7 +934,7 @@ func duplicate_node(args: Dictionary) -> Dictionary:
 		return err
 
 	var new_path: String = String(root.get_path_to(parent)).path_join(new_name)
-	if root.get_path_to(parent) == ".":
+	if String(root.get_path_to(parent)) == ".":
 		new_path = new_name
 	var receipt: Dictionary = _verify_saved(scene_path, [new_path], [])
 	if not receipt.is_empty():
