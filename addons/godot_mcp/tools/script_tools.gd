@@ -331,12 +331,39 @@ func rename_file(args: Dictionary) -> Dictionary:
 		if sidecar_err != OK:
 			push_warning("[Godot MCP] rename_file: failed to move .uid sidecar %s -> %s (err=%d). UID resolution may stay pinned to the old path until rescan." % [old_uid_sidecar, new_uid_sidecar, sidecar_err])
 
+	# Move the .import sidecar for imported assets (.png, .ogg, fonts...).
+	# The sidecar carries the importer settings and the embedded UID; without
+	# it the moved asset reimports from defaults. The internal source_file
+	# remap line also points at the old path and must be rewritten, or the
+	# importer treats the sidecar as orphaned.
+	var import_sidecar_moved: bool = false
+	var old_import_sidecar: String = old_path + ".import"
+	var new_import_sidecar: String = new_path + ".import"
+	if FileAccess.file_exists(old_import_sidecar):
+		var import_err := DirAccess.rename_absolute(old_import_sidecar, new_import_sidecar)
+		if import_err == OK:
+			import_sidecar_moved = true
+			var sf := FileAccess.open(new_import_sidecar, FileAccess.READ)
+			if sf:
+				var import_text: String = sf.get_as_text()
+				sf.close()
+				var patched: String = import_text.replace(old_path, new_path)
+				if patched != import_text:
+					var wf := FileAccess.open(new_import_sidecar, FileAccess.WRITE)
+					if wf:
+						wf.store_string(patched)
+						wf.close()
+		else:
+			push_warning("[Godot MCP] rename_file: failed to move .import sidecar %s -> %s (err=%d). The asset will reimport with default settings." % [old_import_sidecar, new_import_sidecar, import_err])
+
 	var err := DirAccess.rename_absolute(old_path, new_path)
 	if err != OK:
-		# Try to roll back the sidecar if we already moved it; leaving the
+		# Try to roll back the sidecars if we already moved them; leaving the
 		# project in a half-renamed state is worse than the original error.
 		if FileAccess.file_exists(new_uid_sidecar) and not FileAccess.file_exists(old_uid_sidecar):
 			DirAccess.rename_absolute(new_uid_sidecar, old_uid_sidecar)
+		if import_sidecar_moved:
+			DirAccess.rename_absolute(new_import_sidecar, old_import_sidecar)
 		return {&"ok": false, &"error": "Failed to rename: " + str(err)}
 
 	# Update the central UID registry so .tscn ext_resource lookups (which

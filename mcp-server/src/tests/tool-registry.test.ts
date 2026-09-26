@@ -71,6 +71,17 @@ describe('Tool registry', () => {
     expect(toolExists('definitely_not_a_tool_xyz')).toBe(false);
   });
 
+  it('advertises the newly registered editor surface', () => {
+    const names = new Set(allTools.map((tool) => tool.name));
+    for (const name of [
+      'duplicate_node', 'reorder_node',
+      'find_files_by_name', 'get_file_outline',
+      'capture_editor_screenshot',
+    ]) {
+      expect(names.has(name), `${name} should be advertised`).toBe(true);
+    }
+  });
+
   it('every advertised MCP tool is registered in the Godot executor map OR the runtime helper', () => {
     const executorTools = getExecutorToolNames();
     const runtimeTools = getRuntimeToolNames();
