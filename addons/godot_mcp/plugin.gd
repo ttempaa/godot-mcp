@@ -9,9 +9,22 @@ const ToolExecutorScript = preload("res://addons/godot_mcp/tool_executor.gd")
 const MCP_RUNTIME_AUTOLOAD_NAME := "MCPRuntime"
 const MCP_RUNTIME_AUTOLOAD_PATH := "res://addons/godot_mcp/runtime/mcp_runtime.gd"
 
+## The MCPRuntime autoload is dev-only; strip it from exports so release
+## builds don't fail with "Failed to instantiate an autoload".
+class RuntimeAutoloadExportStripper extends EditorExportPlugin:
+	func _get_name() -> String:
+		return "GodotMCPRuntimeAutoloadStripper"
+
+	func _customize_project_settings() -> void:
+		var autoload_key := "autoload/" + MCP_RUNTIME_AUTOLOAD_NAME
+		if ProjectSettings.has_setting(autoload_key):
+			ProjectSettings.set_setting(autoload_key, null)
+			print("[Godot MCP] Export: stripped autoload '%s' from the build" % MCP_RUNTIME_AUTOLOAD_NAME)
+
 var _mcp_client: Node  # MCPClient
 var _tool_executor: Node  # ToolExecutor
 var _status_label: Label
+var _export_stripper: RuntimeAutoloadExportStripper
 
 func _enter_tree() -> void:
 	print("[Godot MCP] Plugin loading...")
@@ -39,6 +52,10 @@ func _enter_tree() -> void:
 	# Add status indicator to editor
 	_setup_status_indicator()
 
+	# Strip the dev-only runtime autoload from exports.
+	_export_stripper = RuntimeAutoloadExportStripper.new()
+	add_export_plugin(_export_stripper)
+
 	# Start connection
 	_mcp_client.connect_to_server()
 
@@ -56,6 +73,10 @@ func _disable_plugin() -> void:
 
 func _exit_tree() -> void:
 	print("[Godot MCP] Plugin unloading...")
+
+	if _export_stripper:
+		remove_export_plugin(_export_stripper)
+		_export_stripper = null
 
 	if _mcp_client:
 		_mcp_client.disconnect_from_server()
