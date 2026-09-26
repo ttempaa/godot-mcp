@@ -78,14 +78,24 @@ const LSP_PORT = parseInt(process.env.GODOT_MCP_LSP_PORT || '6005', 10);
 // ---------------------------------------------------------------------------
 process.on('unhandledRejection', (reason: unknown) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
-  // Expected during LSP reconnect (socket-level noise — the retry loop
-  // in connectLspWithRetry will recover).  Log once, don't crash.
-  if (msg.includes('Socket closed') || msg.includes('ECONN') || msg.includes('EPIPE')) {
+  // vscode-jsonrpc can surface socket-level rejections for LSP requests
+  // that were in flight when the editor died — they escape our local
+  // try/catch.  Swallow them ONLY while the LSP connection is down or in
+  // a reconnect window (see lspChurn), so unrelated socket-shaped bugs
+  // elsewhere in the server still surface.
+  const socketShaped =
+    msg.includes('Socket closed') || msg.includes('ECONN') || msg.includes('EPIPE');
+  if (socketShaped && (lspChurn || (lspClient !== null && !lspClient.connected))) {
     return;
   }
   console.error(`[${SERVER_NAME}] Unhandled rejection: ${msg}`);
   if (reason instanceof Error && reason.stack) console.error(reason.stack);
 });
+
+// True while the LSP connection is known to be transitioning: set when the
+// editor bridge drops (the LSP socket dies with the editor process) and
+// cleared when the LSP retry loop re-establishes the connection.
+let lspChurn = false;
 
 const args = process.argv.slice(2);
 const noForce = args.includes('--no-force');
@@ -102,9 +112,9 @@ let lspClient: LspClient | null = null;
 //
 // These five tools are handled locally by the TypeScript server via a
 // direct TCP connection to Godot's built-in Language Server Protocol
-// server (port 6065 in this project), rather than through the WebSocket
-// bridge to the Godot plugin.  This gives us project-wide diagnostics
-// with full class-inheritance context.
+// server (default port 6005; override with GODOT_MCP_LSP_PORT), rather
+// than through the WebSocket bridge to the Godot plugin.  This gives us
+// project-wide diagnostics with full class-inheritance context.
 // ---------------------------------------------------------------------------
 const LSP_TOOLS = new Set([
   'validate_script',
@@ -132,12 +142,13 @@ async function executeLspToolCall(name: string, args: Record<string, unknown>): 
     switch (name) {
       case 'validate_script': {
         const filePath = String(args.path ?? '');
-        const diagnostics = await lspClient.getDiagnostics(filePath);
+        const { diagnostics, timedOut } = await lspClient.getDiagnostics(filePath);
         const errors = diagnostics.filter(d => d.severity === 1); // 1 = Error
         const warnings = diagnostics.filter(d => d.severity === 2); // 2 = Warning
         result = {
           ok: true,
           valid: errors.length === 0,
+          timedOut: timedOut === true,
           path: filePath,
           diagnostics: diagnostics.map(d => ({
             severity: d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint',
@@ -152,8 +163,10 @@ async function executeLspToolCall(name: string, args: Record<string, unknown>): 
           errorCount: errors.length,
           warningCount: warnings.length,
           message: diagnostics.length === 0
-            ? 'No issues found.'
-            : `Found ${errors.length} error(s) and ${warnings.length} warning(s).`,
+            ? (timedOut
+              ? 'Timed out waiting for diagnostics — the result may be incomplete; treat an empty list as unverified, not clean.'
+              : 'No issues found.')
+            : `Found ${errors.length} error(s) and ${warnings.length} warning(s).` + (timedOut ? ' (timed out — the list may be incomplete)' : ''),
         };
         break;
       }
@@ -583,6 +596,7 @@ async function startPrimary(): Promise<void> {
           lspClient!.disconnect().catch(() => {});
           return;
         }
+        lspChurn = false;
         console.error(`[${SERVER_NAME}] LSP connected on port ${LSP_PORT}`);
       }).catch((err: Error) => {
         if (gen !== lspRetryGeneration) return;
@@ -619,6 +633,7 @@ async function startPrimary(): Promise<void> {
       }
     } else {
       console.error(`[${SERVER_NAME}] Godot disconnected`);
+      lspChurn = true;                            // LSP socket dies with the editor
       ++lspRetryGeneration;                       // cancel retry loop
       if (lspClient?.connected) {
         lspClient.disconnect().catch(() => {});   // release stale LSP TCP socket

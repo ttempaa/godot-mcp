@@ -225,8 +225,11 @@ export class LspClient {
   /**
    * Validate a GDScript file by opening it in the LSP server and waiting for
    * `textDocument/publishDiagnostics`.  Returns zero or more diagnostics.
+   * `timedOut` is true when the settle window expired before the server
+   * finished publishing — the diagnostics may be incomplete, and callers
+   * must not treat an empty list as "clean" in that case.
    */
-  async getDiagnostics(filePath: string): Promise<Diagnostic[]> {
+  async getDiagnostics(filePath: string): Promise<{ diagnostics: Diagnostic[]; timedOut: boolean }> {
     this._ensureConnected();
     const uri = this._toFileUri(filePath);
 
@@ -254,7 +257,7 @@ export class LspClient {
     // Godot LSP publishes diagnostics asynchronously in potentially
     // multiple rounds — we poll with a settle window (300 ms + 200 ms
     // quiet period) to avoid catching an intermediate empty batch.
-    const result = await this._waitForDiagnostics(uri);
+    const { diagnostics: result, timedOut } = await this._waitForDiagnostics(uri);
 
     // Clean up — close the document on the server side
     try {
@@ -265,7 +268,7 @@ export class LspClient {
       // best-effort
     }
 
-    return result;
+    return { diagnostics: result, timedOut };
   }
 
   /** Go to the definition of the symbol at the given position. */
@@ -275,9 +278,11 @@ export class LspClient {
     this._ensureConnected();
     const uri = this._toFileUri(filePath);
     await this._openDocument(uri, filePath);
-    const result = await this._connection!.sendRequest(DefinitionRequest.type, {
-      textDocument: { uri }, position: { line, character },
-    });
+    const result = await this._requestWithParseGrace(
+      () => this._connection!.sendRequest(DefinitionRequest.type, {
+        textDocument: { uri }, position: { line, character },
+      }) as Promise<Definition | null>,
+    );
     await this._closeDocument(uri);
     return (result as Definition | null) ?? null;
   }
@@ -294,11 +299,13 @@ export class LspClient {
 
     await this._openDocument(uri, filePath);
 
-    const result = await this._connection!.sendRequest(ReferencesRequest.type, {
-      textDocument: { uri },
-      position: { line, character },
-      context: { includeDeclaration },
-    });
+    const result = await this._requestWithParseGrace(
+      () => this._connection!.sendRequest(ReferencesRequest.type, {
+        textDocument: { uri },
+        position: { line, character },
+        context: { includeDeclaration },
+      }) as Promise<Location[]>,
+    );
 
     await this._closeDocument(uri);
     return result ?? [];
@@ -315,10 +322,12 @@ export class LspClient {
 
     await this._openDocument(uri, filePath);
 
-    const result = await this._connection!.sendRequest(HoverRequest.type, {
-      textDocument: { uri },
-      position: { line, character },
-    });
+    const result = await this._requestWithParseGrace(
+      () => this._connection!.sendRequest(HoverRequest.type, {
+        textDocument: { uri },
+        position: { line, character },
+      }) as Promise<Hover | null>,
+    );
 
     await this._closeDocument(uri);
     return result ?? null;
@@ -419,13 +428,36 @@ export class LspClient {
   }
 
   /**
+   * Send an LSP request, retrying once after a short grace period when the
+   * answer comes back null/empty.  `_openDocument` gives the server a fixed
+   * moment to parse a just-opened document; on large files that moment may
+   * not be enough, and a request racing the parser returns an empty result.
+   * A single retry after 250 ms covers that without penalising the common
+   * fast path (a genuine "no definition/references" answer stays final
+   * after the retry).
+   */
+  private async _requestWithParseGrace<T>(
+    send: () => Promise<T>,
+  ): Promise<T> {
+    let result = await send();
+    if (result === null || result === undefined ||
+        (Array.isArray(result) && result.length === 0)) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      result = await send();
+    }
+    return result;
+  }
+
+  /**
    * Poll the diagnostics cache until a stable result is available.
    *
    * Godot LSP may publish diagnostics in multiple rounds (e.g. an empty
    * batch first, then the real errors after parsing completes).  We wait
    * at least 300 ms, then require a 200 ms quiet window before returning.
+   * Returns whatever is cached plus a `timedOut` flag so callers can tell
+   * "verified clean" apart from "gave up waiting".
    */
-  private async _waitForDiagnostics(uri: string): Promise<Diagnostic[]> {
+  private async _waitForDiagnostics(uri: string): Promise<{ diagnostics: Diagnostic[]; timedOut: boolean }> {
     const start = Date.now();
     let lastCount = -1;
 
@@ -450,7 +482,7 @@ export class LspClient {
         const recheckCount = recheck !== undefined ? recheck.length : -1;
 
         if (recheckCount === currentCount) {
-          return cached;
+          return { diagnostics: cached, timedOut: false };
         }
         // Count changed — Godot is still publishing, keep polling
         lastCount = recheckCount;
@@ -464,10 +496,11 @@ export class LspClient {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    // Timeout — return whatever we have
-    return this._diagnosticsCache.get(uri)
+    // Timeout — return whatever we have and flag it
+    const fallback = this._diagnosticsCache.get(uri)
       ?? (() => { const r = this._uriToResUri(uri); return r ? this._diagnosticsCache.get(r) : undefined; })()
       ?? [];
+    return { diagnostics: fallback, timedOut: true };
   }
 
   /**
