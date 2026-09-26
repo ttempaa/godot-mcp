@@ -51,6 +51,8 @@ const _MUTATING_TOOLS := {
 	"modify_node_property": {"snapshot_args": ["scene_path"]},
 	"rename_node": {"snapshot_args": ["scene_path"]},
 	"move_node": {"snapshot_args": ["scene_path"]},
+	"duplicate_node": {"snapshot_args": ["scene_path"]},
+	"reorder_node": {"snapshot_args": ["scene_path"]},
 	"attach_script": {"snapshot_args": ["scene_path"]},
 	"detach_script": {"snapshot_args": ["scene_path"]},
 	"set_collision_shape": {"snapshot_args": ["scene_path"]},
