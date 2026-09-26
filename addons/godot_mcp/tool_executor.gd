@@ -127,6 +127,8 @@ func _init_tools() -> void:
 	_tool_map = {
 		&"list_dir": [_file_tools, &"list_dir"],
 		&"read_file": [_file_tools, &"read_file"],
+		&"find_files_by_name": [_file_tools, &"find_files_by_name"],
+		&"get_file_outline": [_file_tools, &"get_file_outline"],
 		&"search_project": [_file_tools, &"search_project"],
 		&"create_script": [_file_tools, &"create_script"],
 

@@ -37,6 +37,22 @@ export const fileTools: ToolDefinition[] = [
         end_line: {
           type: 'number',
           description: 'Inclusive end line; 0 or missing means to end of file (optional)'
+        },
+        preview: {
+          type: 'boolean',
+          description: 'Return a numbered head+tail excerpt (default 40 head / 10 tail lines) instead of the byte-budgeted full read. Good for orienting in large files.'
+        },
+        preview_head: {
+          type: 'number',
+          description: 'Head lines in preview mode (default 40)'
+        },
+        preview_tail: {
+          type: 'number',
+          description: 'Tail lines in preview mode (default 10)'
+        },
+        redact_secrets: {
+          type: 'boolean',
+          description: 'Best-effort scrub of api keys/tokens/passwords in the returned content (default true)'
         }
       },
       required: ['path']
@@ -76,6 +92,32 @@ export const fileTools: ToolDefinition[] = [
         }
       },
       required: ['path', 'content']
+    }
+  },
+  {
+    name: 'find_files_by_name',
+    description: 'Find files by exact filename or substring across the project (or a subdirectory). Skips hidden dirs like .git/.godot.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Filename or substring (case-insensitive)' },
+        root: { type: 'string', description: 'Directory scope; defaults to res://' },
+        exact: { type: 'boolean', description: 'Require an exact filename match (default false)' },
+        max_results: { type: 'number', description: 'Cap on matches (default 50)' }
+      },
+      required: ['name']
+    }
+  },
+  {
+    name: 'get_file_outline',
+    description: 'Top-level declarations of a .gd file (funcs, vars, consts, signals, enums, classes) with line numbers and func/class end-line spans. Cheaper than reading the whole file; pair with read_file start_line/end_line to fetch bodies.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path to the .gd file' },
+        include_locals: { type: 'boolean', description: 'Also list declarations inside function bodies (default false)' }
+      },
+      required: ['path']
     }
   }
 ];

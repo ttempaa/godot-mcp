@@ -7,6 +7,9 @@ class_name FileTools
 const DEFAULT_MAX_BYTES := 200_000
 const DEFAULT_MAX_RESULTS := 200
 const MAX_TRAVERSAL_DEPTH := 20
+const DEFAULT_PREVIEW_HEAD := 40
+const DEFAULT_PREVIEW_TAIL := 10
+const REDACTED_TEXT := "[REDACTED]"
 const _SKIP_EXTENSIONS: Dictionary = {
 	".import": true, ".png": true, ".jpg": true, ".jpeg": true,
 	".webp": true, ".svg": true, ".ogg": true, ".wav": true,
@@ -91,6 +94,57 @@ func read_file(args: Dictionary) -> Dictionary:
 	if file == null:
 		return {&"ok": false, &"error": "Cannot open file: " + path}
 
+	var redact_secrets: bool = bool(args.get(&"redact_secrets", true))
+	var preview: bool = bool(args.get(&"preview", false))
+
+	# Preview mode: numbered head + tail only, independent of byte budget —
+	# for orienting in large files without pulling the whole thing.
+	if preview:
+		var all_lines: PackedStringArray = []
+		while not file.eof_reached():
+			all_lines.append(file.get_line())
+		file.close()
+		var total_lines := all_lines.size()
+		var head_n := int(args.get(&"preview_head", DEFAULT_PREVIEW_HEAD))
+		var tail_n := int(args.get(&"preview_tail", DEFAULT_PREVIEW_TAIL))
+		var preview_text: String
+		var head_range: Array = []
+		var tail_range: Array = []
+		if total_lines <= head_n + tail_n:
+			var numbered: Array = []
+			for i in range(total_lines):
+				numbered.append("%5d| %s" % [i + 1, all_lines[i]])
+			preview_text = "
+".join(numbered)
+			if total_lines > 0:
+				head_range = [1, total_lines]
+		else:
+			var head_lines: Array = []
+			for i in range(head_n):
+				head_lines.append("%5d| %s" % [i + 1, all_lines[i]])
+			var tail_start := total_lines - tail_n
+			var tail_lines: Array = []
+			for i in range(tail_start, total_lines):
+				tail_lines.append("%5d| %s" % [i + 1, all_lines[i]])
+			preview_text = "
+".join(head_lines) 				+ "
+... [%d lines omitted: %d-%d] ...
+" % [total_lines - head_n - tail_n, head_n + 1, tail_start] 				+ "
+".join(tail_lines)
+			head_range = [1, head_n]
+			tail_range = [tail_start + 1, total_lines]
+		if redact_secrets:
+			preview_text = _redact_sensitive_content(preview_text)
+		return {
+			&"ok": true,
+			&"path": path,
+			&"preview": true,
+			&"content": preview_text,
+			&"total_lines": total_lines,
+			&"head_range": head_range,
+			&"tail_range": tail_range,
+		}
+
 	var content: String
 	var line_count: int = 0
 
@@ -126,6 +180,9 @@ func read_file(args: Dictionary) -> Dictionary:
 
 	file.close()
 
+	if redact_secrets:
+		content = _redact_sensitive_content(content)
+
 	return {
 		&"ok": true,
 		&"path": path,
@@ -133,6 +190,172 @@ func read_file(args: Dictionary) -> Dictionary:
 		&"line_count": line_count,
 		&"range": [start_line, end_line] if end_line > 0 else null
 	}
+
+# =============================================================================
+# find_files_by_name - Find files by exact filename or substring
+# =============================================================================
+func find_files_by_name(args: Dictionary) -> Dictionary:
+	var name: String = str(args.get(&"name", "")).strip_edges()
+	if name.is_empty():
+		return {&"ok": false, &"error": "Missing 'name'"}
+
+	var root: String = str(args.get(&"root", "res://"))
+	if not root.begins_with("res://"):
+		root = "res://" + root
+	var exact: bool = bool(args.get(&"exact", false))
+	var max_results: int = int(args.get(&"max_results", 50))
+	var target := name.to_lower()
+
+	var out: Array = []
+	_find_files_recursive(root, target, exact, out, max_results, 0)
+	return {
+		&"ok": true,
+		&"name": name,
+		&"root": root,
+		&"matches": out,
+		&"count": out.size(),
+		&"truncated": out.size() >= max_results,
+	}
+
+
+func _find_files_recursive(path: String, target_lower: String, exact: bool, out: Array, max_results: int, depth: int) -> void:
+	if out.size() >= max_results or depth > MAX_TRAVERSAL_DEPTH:
+		return
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while name != "":
+		if name.begins_with("."):
+			name = dir.get_next()
+			continue
+		var full := path.path_join(name)
+		if dir.current_is_dir():
+			_find_files_recursive(full, target_lower, exact, out, max_results, depth + 1)
+		else:
+			var lname := name.to_lower()
+			var matched := lname == target_lower if exact else lname.find(target_lower) != -1
+			if matched:
+				out.append(full)
+				if out.size() >= max_results:
+					dir.list_dir_end()
+					return
+		name = dir.get_next()
+	dir.list_dir_end()
+
+
+# =============================================================================
+# get_file_outline - Top-level declarations of a .gd file with line spans
+# =============================================================================
+func get_file_outline(args: Dictionary) -> Dictionary:
+	var path: String = str(args.get(&"path", "")).strip_edges()
+	if path.is_empty():
+		return {&"ok": false, &"error": "Missing 'path'"}
+	if not path.begins_with("res://"):
+		path = "res://" + path
+	if not FileAccess.file_exists(path):
+		return {&"ok": false, &"error": "File not found: " + path}
+
+	# Top-level declarations only by default: indented declarations (locals
+	# inside function bodies) dominate outline noise, so callers must opt in.
+	var include_locals: bool = bool(args.get(&"include_locals", false))
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {&"ok": false, &"error": "Cannot open file: " + path}
+	var lines: PackedStringArray = []
+	while not file.eof_reached():
+		lines.append(file.get_line())
+	file.close()
+
+	var ext := path.get_extension().to_lower()
+	if ext != "gd":
+		return {&"ok": false, &"error": "Outline only supported for .gd files (got ." + ext + ")"}
+
+	var entries: Array = []
+	var re := RegEx.new()
+	re.compile("^(\s*)(class_name|extends|class|func|signal|const|var|@export|enum)\b")
+	for i in range(lines.size()):
+		var line: String = lines[i]
+		var stripped := line.strip_edges(true, false)
+		if stripped.is_empty() or stripped.begins_with("#"):
+			continue
+		var m := re.search(line)
+		if m == null:
+			continue
+		var indent_depth := m.get_string(1).length()
+		if not include_locals and indent_depth > 0:
+			continue
+		var kw := m.get_string(2)
+		var sig: String = stripped
+		if sig.length() > 120:
+			sig = sig.substr(0, 120) + "…"
+		entries.append({
+			&"line": i + 1,
+			&"kind": kw,
+			&"depth": indent_depth,
+			&"signature": sig,
+		})
+
+	_compute_outline_spans(entries, lines)
+
+	return {
+		&"ok": true,
+		&"path": path,
+		&"total_lines": lines.size(),
+		&"entries": entries,
+		&"count": entries.size(),
+		&"include_locals": include_locals,
+		&"hint": "Top-level only by default. Pass include_locals=true to surface declarations inside function bodies. Use start_line/end_line from each entry with read_file to fetch its body.",
+	}
+
+
+func _compute_outline_spans(entries: Array, lines: PackedStringArray) -> void:
+	# End of a func/class span = the line before the next non-blank line at
+	# the same or shallower indent. Indentation-based heuristic.
+	for i in range(entries.size()):
+		var entry: Dictionary = entries[i]
+		var kind := str(entry.get(&"kind", ""))
+		if kind != "func" and kind != "class":
+			continue
+		var start_line := int(entry.get(&"line", 0))
+		var depth := int(entry.get(&"depth", 0))
+		var end_line := lines.size()
+		for j in range(start_line, lines.size()):
+			var l: String = lines[j]
+			var stripped := l.strip_edges()
+			if stripped.is_empty() or stripped.begins_with("#"):
+				continue
+			var leading := 0
+			while leading < l.length() and (l.substr(leading, 1) == "	" or l.substr(leading, 1) == " "):
+				leading += 1
+			if leading <= depth:
+				end_line = j
+				break
+		entry[&"end_line"] = end_line
+		entry[&"line_count"] = end_line - start_line + 1
+
+
+# =============================================================================
+# _redact_sensitive_content - best-effort secret scrubbing for file reads
+# =============================================================================
+func _redact_sensitive_content(content: String) -> String:
+	var out := content
+	var rules := [
+		{"pattern": "(?im)^(\s*(?:provider/)?api_key\s*=\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\s*(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\s*authorization\s*[:=]\s*bearer\s+).*$", "replacement": "$1" + REDACTED_TEXT},
+		{"pattern": "(?im)^(\s*x-api-key\s*[:=]\s*).*$", "replacement": "$1" + REDACTED_TEXT},
+	]
+	for rule in rules:
+		var regex := RegEx.new()
+		var err := regex.compile(str(rule["pattern"]))
+		if err != OK:
+			continue
+		out = regex.sub(out, str(rule["replacement"]), true)
+	return out
+
 
 # =============================================================================
 # search_project - Search for text in project files
