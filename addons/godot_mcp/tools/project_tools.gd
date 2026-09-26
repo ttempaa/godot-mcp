@@ -457,7 +457,7 @@ func _collect_layers(prefix: String) -> Array:
 # get_node_properties
 # =============================================================================
 const _SKIP_PROPS: Dictionary = {
-	"script": true, "owner": true, "scene_file_path": true, "unique_name_in_owner": true,
+	"script": true, "owner": true, "scene_file_path": true,
 }
 
 const ENUM_HINTS = {
@@ -486,7 +486,8 @@ func get_node_properties(args: Dictionary) -> Dictionary:
 			continue
 		if _SKIP_PROPS.has(prop_name):
 			continue
-		if not (prop.get(&"usage", 0) & PROPERTY_USAGE_EDITOR):
+		# STORAGE-only properties are cut below; keep %-names discoverable.
+		if not (prop.get(&"usage", 0) & PROPERTY_USAGE_EDITOR) and prop_name != "unique_name_in_owner":
 			continue
 
 		var info := {
