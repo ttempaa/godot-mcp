@@ -178,9 +178,12 @@ export class GodotBridge {
 
         if (desiredRole === 'runtime') {
           if (this.runtime && this.runtime.ws !== ws) {
-            this.log('warn', 'Rejecting runtime connection - runtime already connected');
-            ws.close(4001, 'Another Godot runtime is already connected');
-            return;
+            // Replace-on-hello: a stale half-open socket from a killed game
+            // would otherwise reject the fresh runtime until TCP timeout.
+            this.log('warn', 'Replacing stale runtime connection with a new one');
+            try { this.runtime.ws.close(4002, 'Replaced by a newer runtime'); }
+            catch (err) { /* already dead */ }
+            this.runtime = null;
           }
           // If we defaulted this socket to editor, release that slot.
           if (assignedRole === 'editor' && this.editor?.ws === ws) {
@@ -197,9 +200,11 @@ export class GodotBridge {
 
         // desiredRole === 'editor'
         if (this.editor && this.editor.ws !== ws) {
-          this.log('warn', 'Rejecting editor connection - editor already connected');
-          ws.close(4000, 'Another Godot editor is already connected');
-          return;
+          // Same replace-on-hello policy for the editor slot.
+          this.log('warn', 'Replacing stale editor connection with a new one');
+          try { this.editor.ws.close(4003, 'Replaced by a newer editor'); }
+          catch (err) { /* already dead */ }
+          this.editor = null;
         }
         if (!this.editor) {
           this.editor = { ws, info: { connectedAt: new Date(), projectPath: message.project_path, role: 'editor' } };
