@@ -137,6 +137,8 @@ func _init_tools() -> void:
 		&"modify_node_property": [_scene_tools, &"modify_node_property"],
 		&"rename_node": [_scene_tools, &"rename_node"],
 		&"move_node": [_scene_tools, &"move_node"],
+		&"duplicate_node": [_scene_tools, &"duplicate_node"],
+		&"reorder_node": [_scene_tools, &"reorder_node"],
 		&"attach_script": [_scene_tools, &"attach_script"],
 		&"detach_script": [_scene_tools, &"detach_script"],
 		&"set_collision_shape": [_scene_tools, &"set_collision_shape"],

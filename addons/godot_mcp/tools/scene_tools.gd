@@ -906,6 +906,11 @@ func duplicate_node(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Cannot duplicate - no parent"}
 
+	var violation: String = _instance_override_violation(root, target, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	var duplicate = target.duplicate()
 	
 	if new_name.is_empty():
@@ -928,8 +933,19 @@ func duplicate_node(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"new_name": new_name,
+	var new_path: String = String(root.get_path_to(parent)).path_join(new_name)
+	if root.get_path_to(parent) == ".":
+		new_path = new_name
+	var receipt: Dictionary = _verify_saved(scene_path, [new_path], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"verified": true, &"new_name": new_name,
 		&"message": "Duplicated '%s' as '%s'" % [node_path, new_name]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 
 func _set_owner_recursive(node: Node, owner: Node) -> void:
@@ -966,6 +982,11 @@ func reorder_node(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Cannot reorder - no parent"}
 
+	var violation: String = _instance_override_violation(root, target, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	var old_index = target.get_index()
 	var max_index = parent.get_child_count() - 1
 	new_index = clampi(new_index, 0, max_index)
@@ -980,8 +1001,16 @@ func reorder_node(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"old_index": old_index, &"new_index": new_index,
+	var receipt: Dictionary = _verify_saved(scene_path, [node_path], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"verified": true, &"old_index": old_index, &"new_index": new_index,
 		&"message": "Moved '%s' from index %d to %d" % [node_path, old_index, new_index]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 
 # =============================================================================

@@ -183,6 +183,50 @@ export const sceneTools: ToolDefinition[] = [
     }
   },
   {
+    name: 'duplicate_node',
+    description: 'Duplicate a node (with its whole subtree) inside a saved scene. The copy is placed right after the original and its owner chain is fixed for saving. Refuses nodes inside instanced sub-scenes without an [editable] tag and verifies the save (pack() receipt).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file being edited'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node to duplicate (cannot be the root)'
+        },
+        new_name: {
+          type: 'string',
+          description: 'Name for the copy. Omit to auto-generate Name2, Name3, ...'
+        }
+      },
+      required: ['scene_path', 'node_path']
+    }
+  },
+  {
+    name: 'reorder_node',
+    description: 'Change a node position among its siblings (same parent) in a saved scene. Clamps the index to valid range. Refuses nodes inside instanced sub-scenes without an [editable] tag and verifies the save.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scene_path: {
+          type: 'string',
+          description: 'Path to the scene file being edited'
+        },
+        node_path: {
+          type: 'string',
+          description: 'Path to the node to reorder (cannot be the root)'
+        },
+        new_index: {
+          type: 'number',
+          description: 'Target sibling index (0 = first child); clamped to the valid range'
+        }
+      },
+      required: ['scene_path', 'node_path', 'new_index']
+    }
+  },
+  {
     name: 'move_node',
     description: 'Move a node to a different parent in a scene and optionally control its position among siblings.',
     inputSchema: {
