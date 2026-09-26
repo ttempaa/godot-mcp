@@ -391,6 +391,23 @@ async function executeToolCall(
   try {
     const result = await godotBridge!.invokeTool(name, toolArgs);
 
+    // Native image content: any tool returning image_b64 gets unwrapped into
+    // an MCP image block (plus a text summary of the remaining fields).
+    if (result && typeof result === 'object' && 'image_b64' in (result as Record<string, unknown>)) {
+      const payload = result as Record<string, unknown>;
+      const imageData = typeof payload.image_b64 === 'string' ? payload.image_b64 : '';
+      const mimeType = typeof payload.mime === 'string' ? payload.mime : 'image/png';
+      const { image_b64: _image, ...summary } = payload;
+      if (imageData) {
+        return {
+          content: [
+            { type: 'image', data: imageData, mimeType },
+            { type: 'text', text: JSON.stringify(summary, null, 2) },
+          ],
+        };
+      }
+    }
+
     if (name === 'map_project' && result && typeof result === 'object' && 'project_map' in (result as Record<string, unknown>)) {
       try {
         const projectMap = (result as Record<string, unknown>).project_map;

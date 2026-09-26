@@ -11,6 +11,7 @@ import { visualizerTools } from './visualizer-tools.js';
 import { undoTools } from './undo-tools.js';
 import { batchTools } from './batch-tools.js';
 import { lspTools } from './lsp-tools.js';
+import { captureTools } from './capture-tools.js';
 import type { ToolDefinition } from '../types.js';
 
 export const allTools: ToolDefinition[] = [
@@ -23,6 +24,7 @@ export const allTools: ToolDefinition[] = [
   ...undoTools,
   ...batchTools,
   ...lspTools,
+  ...captureTools,
 ];
 
 export function toolExists(toolName: string): boolean {

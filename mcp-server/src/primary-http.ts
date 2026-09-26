@@ -14,7 +14,9 @@ import http from 'node:http';
 const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
 export interface ToolCallResult {
-  content: Array<{ type: string; text: string }>;
+  /** Text blocks always carry `text`; image blocks (screenshot tools) carry
+   *  `data` (base64) and `mimeType` instead. */
+  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
   isError?: boolean;
 }
 

@@ -14,6 +14,7 @@ var _script_tools: Node
 var _project_tools: Node
 var _asset_tools: Node
 var _visualizer_tools: Node
+var _capture_tools: Node
 
 var _undo_manager: MCPUndoManager
 
@@ -120,6 +121,9 @@ func _init_tools() -> void:
 	add_child(_asset_tools)
 
 	_visualizer_tools = preload("res://addons/godot_mcp/tools/visualizer_tools.gd").new()
+	_capture_tools = preload("res://addons/godot_mcp/tools/capture_tools.gd").new()
+	_capture_tools.name = "CaptureTools"
+	add_child(_capture_tools)
 	_visualizer_tools.name = "VisualizerTools"
 	add_child(_visualizer_tools)
 
@@ -128,6 +132,7 @@ func _init_tools() -> void:
 		&"list_dir": [_file_tools, &"list_dir"],
 		&"read_file": [_file_tools, &"read_file"],
 		&"find_files_by_name": [_file_tools, &"find_files_by_name"],
+		&"capture_editor_screenshot": [_capture_tools, &"capture_editor_screenshot"],
 		&"get_file_outline": [_file_tools, &"get_file_outline"],
 		&"search_project": [_file_tools, &"search_project"],
 		&"create_script": [_file_tools, &"create_script"],
@@ -216,6 +221,7 @@ func set_editor_plugin(plugin: EditorPlugin) -> void:
 	if _script_tools: _script_tools.set_editor_plugin(plugin)
 	if _project_tools: _project_tools.set_editor_plugin(plugin)
 	if _asset_tools: _asset_tools.set_editor_plugin(plugin)
+	if _capture_tools: _capture_tools.set_editor_plugin(plugin)
 	if _visualizer_tools:
 		_visualizer_tools.set_editor_plugin(plugin)
 		# Pass scene_tools reference for visualizer internal scene functions
@@ -245,6 +251,7 @@ const _COROUTINE_TOOLS := {
 	"wait": true,
 	"run_scene": true,
 	"get_errors": true,
+	"capture_editor_screenshot": true,
 }
 
 ## Tools that may NOT appear inside a batch_execute sub-command. Either because
@@ -354,6 +361,8 @@ func _dispatch_only(tool_name: String, args: Dictionary) -> Dictionary:
 		match tool_name:
 			"wait":
 				result = await node.wait(args)
+			"capture_editor_screenshot":
+				result = await node.capture_editor_screenshot(args)
 			"run_scene":
 				result = await node.run_scene(args)
 			"get_errors":
