@@ -11,7 +11,7 @@ const VariantCodec = preload("res://addons/godot_mcp/utils/variant_codec.gd")
 
 const _SKIP_PROPS: Dictionary[String, bool] = {
 	"script": true, "owner": true,
-	"unique_name_in_owner": true, "editor_description": true,
+	"editor_description": true,
 }
 
 var _editor_plugin: EditorPlugin = null
@@ -103,6 +103,82 @@ func _set_node_properties(node: Node, properties: Dictionary) -> void:
 	for prop_name: String in properties:
 		var prop_value = _parse_value(properties[prop_name])
 		node.set(prop_name, prop_value)
+
+
+# =============================================================================
+# Transaction guards & receipts: refuse edits pack() would silently drop,
+# verify saves, warn on open editor tabs.
+# =============================================================================
+
+## "" = allowed. Otherwise a human-readable refusal.
+func _instance_override_violation(root: Node, target: Node, scene_path: String) -> String:
+	if target == root or target.owner == root:
+		return ""
+	## Find the instanced sub-scene root that owns this node.
+	var inst_root: Node = target
+	while inst_root != null and inst_root != root and inst_root.owner != root:
+		inst_root = inst_root.get_parent()
+	if inst_root == null or inst_root == root or inst_root.scene_file_path.is_empty():
+		return "" ## not an instance — don't block
+	var inst_path: String = String(root.get_path_to(inst_root))
+	if _has_editable_tag(scene_path, inst_path):
+		return ""
+	return ("Refused: node '%s' is inside instanced sub-scene '%s', which has no "
+			+ "[editable] tag in %s — PackedScene.pack() silently drops such override "
+			+ "children/properties on save. Add "
+			+ "[editable path=\"%s\"] to the scene file to edit inside the instance.") % [String(target.name), inst_path, scene_path, inst_path]
+
+
+func _has_editable_tag(scene_path: String, instance_path: String) -> bool:
+	var f: FileAccess = FileAccess.open(scene_path, FileAccess.READ)
+	if f == null:
+		return false
+	var text: String = f.get_as_text()
+	f.close()
+	if not text.contains("[node "):
+		return true ## not a text scene — can't check, don't block
+	return text.contains("[editable path=\"%s\"]" % instance_path)
+
+
+## Receipt: {} = saved file matches the request, otherwise an {ok:false} dict.
+func _verify_saved(scene_path: String, expect_nodes: Array, expect_props: Array) -> Dictionary:
+	var result := _load_scene(scene_path)
+	if not result[1].is_empty():
+		return {&"ok": false, &"error": "Save receipt failed: cannot re-load saved scene: " + str(result[1].get(&"error", ""))}
+	var root: Node = result[0]
+	var missing: Array = []
+	for path: String in expect_nodes:
+		if _find_node(root, path) == null:
+			missing.append(path)
+	var wrong: Array = []
+	for check: Dictionary in expect_props:
+		var node: Node = _find_node(root, String(check.get(&"node_path", "")))
+		if node == null:
+			wrong.append("%s: node missing" % String(check.get(&"node_path", "")))
+			continue
+		var prop: String = String(check.get(&"property", ""))
+		if str(node.get(prop)) != String(check.get(&"value", "")):
+			wrong.append("%s.%s = %s (expected %s)" % [String(check.get(&"node_path", "")), prop, str(node.get(prop)), String(check.get(&"value", ""))])
+	root.queue_free()
+	if not missing.is_empty() or not wrong.is_empty():
+		return {
+			&"ok": false,
+			&"error": "Save receipt FAILED — the saved file does not contain what was requested (silent pack()/save loss).",
+			&"missing_nodes": missing,
+			&"wrong_properties": wrong,
+			&"hint": "Engine trap: override children under an instanced sub-scene without [editable] are dropped by pack().",
+		}
+	return {}
+
+
+func _open_tab_warning(scene_path: String) -> String:
+	if _editor_plugin == null:
+		return ""
+	var edited: Node = _editor_plugin.get_editor_interface().get_edited_scene_root()
+	if edited != null and edited.scene_file_path == scene_path:
+		return ("Scene is open in an editor tab: the tab will reload from disk and any "
+				+ "unsaved manual edits in it will be LOST. Close or save the tab first.")
+	return ""
 
 
 # =============================================================================
@@ -514,6 +590,11 @@ func add_node(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
 
+	var violation: String = _instance_override_violation(root, parent, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	var new_node: Node = ClassDB.instantiate(node_type) as Node
 	if not new_node:
 		root.queue_free()
@@ -561,10 +642,19 @@ func add_node(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"node_name": new_node.name, &"node_type": node_type,
-		&"descendants_added": added_descendants,
+	var new_path: String = String(new_node.name) if parent_path == "." or parent_path.is_empty() else parent_path.path_join(String(new_node.name))
+	var receipt: Dictionary = _verify_saved(scene_path, [new_path], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"scene_path": scene_path, &"node_name": new_node.name, &"node_type": node_type,
+		&"descendants_added": added_descendants, &"verified": true,
 		&"message": "Added %s (%s) to scene%s" % [new_node.name, node_type,
 			(" with %d descendant(s)" % added_descendants) if added_descendants > 0 else ""]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 # =============================================================================
 # remove_node
@@ -587,6 +677,11 @@ func remove_node(args: Dictionary) -> Dictionary:
 	if not target:
 		root.queue_free()
 		return {&"ok": false, &"error": "Node not found: " + node_path}
+
+	var violation: String = _instance_override_violation(root, target, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
 
 	var n_name = target.name
 	var n_type = target.get_class()
@@ -632,6 +727,11 @@ func modify_node_property(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Node not found: " + node_path}
 
+	var violation: String = _instance_override_violation(root, target, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	# Check property exists
 	var prop_exists := false
 	for prop: Dictionary in target.get_property_list():
@@ -657,9 +757,19 @@ func modify_node_property(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"node_path": node_path,
-		&"property_name": property_name, &"old_value": str(old_value), &"new_value": str(parsed),
+	var receipt: Dictionary = _verify_saved(scene_path, [], [
+		{&"node_path": node_path, &"property": property_name, &"value": str(parsed)},
+	])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"scene_path": scene_path, &"node_path": node_path,
+		&"property_name": property_name, &"old_value": str(old_value), &"new_value": str(parsed), &"verified": true,
 		&"message": "Set %s.%s = %s" % [node_path, property_name, str(parsed)]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 # =============================================================================
 # rename_node
@@ -686,6 +796,11 @@ func rename_node(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Node not found: " + node_path}
 
+	var violation: String = _instance_override_violation(root, target, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	var old_name = target.name
 	target.name = new_name
 
@@ -693,8 +808,18 @@ func rename_node(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"old_name": str(old_name), &"new_name": new_name,
+	var dir: String = node_path.get_base_dir()
+	var new_path: String = new_name if dir == "." or dir.is_empty() else dir + "/" + new_name
+	var receipt: Dictionary = _verify_saved(scene_path, [new_path], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"old_name": str(old_name), &"new_name": new_name, &"verified": true,
 		&"message": "Renamed '%s' to '%s'" % [old_name, new_name]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 # =============================================================================
 # move_node
@@ -725,6 +850,11 @@ func move_node(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "New parent not found: " + new_parent_path}
 
+	var violation: String = _instance_override_violation(root, new_parent, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	target.get_parent().remove_child(target)
 	new_parent.add_child(target)
 	target.owner = root
@@ -736,7 +866,17 @@ func move_node(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"message": "Moved '%s' to '%s'" % [node_path, new_parent_path]}
+	var new_path: String = String(target.name) if new_parent_path == "." or new_parent_path.is_empty() else new_parent_path.path_join(String(target.name))
+	var receipt: Dictionary = _verify_saved(scene_path, [new_path], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"verified": true,
+		&"message": "Moved '%s' to '%s'" % [node_path, new_parent_path]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 # =============================================================================
 # duplicate_node
@@ -1084,6 +1224,11 @@ func instance_scene(args: Dictionary) -> Dictionary:
 		root.queue_free()
 		return {&"ok": false, &"error": "Parent node not found: " + parent_path}
 
+	var violation: String = _instance_override_violation(root, parent, scene_path)
+	if violation != "":
+		root.queue_free()
+		return {&"ok": false, &"error": violation}
+
 	var instance = _instantiate_packed_scene_for_edit(instance_packed, true)
 	if not instance:
 		root.queue_free()
@@ -1103,9 +1248,18 @@ func instance_scene(args: Dictionary) -> Dictionary:
 	if not err.is_empty():
 		return err
 
-	return {&"ok": true, &"scene_path": scene_path, &"instance_path": instance_path,
-		&"node_name": actual_name, &"node_type": instance.get_class(),
+	var instance_path_final: String = String(actual_name) if parent_path == "." or parent_path.is_empty() else parent_path.path_join(String(actual_name))
+	var receipt: Dictionary = _verify_saved(scene_path, [instance_path_final], [])
+	if not receipt.is_empty():
+		return receipt
+
+	var response: Dictionary = {&"ok": true, &"scene_path": scene_path, &"instance_path": instance_path,
+		&"node_name": actual_name, &"node_type": instance.get_class(), &"verified": true,
 		&"message": "Instanced '%s' as '%s' in scene" % [instance_path, actual_name]}
+	var tab_warn: String = _open_tab_warning(scene_path)
+	if tab_warn != "":
+		response[&"editor_warning"] = tab_warn
+	return response
 
 # =============================================================================
 # set_mesh
@@ -1653,7 +1807,8 @@ func get_scene_node_properties(args: Dictionary) -> Dictionary:
 			continue
 
 		var usage = prop.get(&"usage", 0)
-		if not (usage & PROPERTY_USAGE_EDITOR):
+		# STORAGE-only properties are cut below; keep %-names discoverable.
+		if not (usage & PROPERTY_USAGE_EDITOR) and prop_name != "unique_name_in_owner":
 			continue
 
 		var current_value = target.get(prop_name)
@@ -2789,14 +2944,21 @@ func call_method(args: Dictionary) -> Dictionary:
 			}
 
 	# Parse args through VariantCodec for {type:"Vector2",...} discriminated form.
+	# Parse with declared arg types where the signature is known: plain
+	# dicts stay dicts, Resource discriminators get loaded.
+	var sig_info: Dictionary = _find_method_info(target, method)
+	var declared_arg_types: Array = sig_info.get("args", []) if not sig_info.is_empty() else []
 	var parsed_args: Array = []
-	for v in (raw_args as Array):
-		parsed_args.append(_parse_value(v))
+	for i in range((raw_args as Array).size()):
+		var v: Variant = (raw_args as Array)[i]
+		if i < declared_arg_types.size():
+			parsed_args.append(VariantCodec.parse_typed_value(v, int(declared_arg_types[i].get("type", TYPE_NIL))))
+		else:
+			parsed_args.append(_parse_value(v))
 
 	# Arity check using MethodInfo. Skip if we can't find a signature (some
 	# C++ overloads expose multiple entries; we just don't fail-fast in that
 	# case — Godot's own call() will raise a clearer error than we could).
-	var sig_info: Dictionary = _find_method_info(target, method)
 	if not sig_info.is_empty():
 		var declared_args: Array = sig_info.get("args", [])
 		var defaults: Array = sig_info.get("default_args", [])
